@@ -1,0 +1,177 @@
+# ============================================================
+#  DATA ENGINEERING PROJECT — Docker Compose
+#  Stack: Airflow + PostgreSQL + MinIO + Spark + dbt
+#  UCV edu.continua | Ing. Hector Loja Alvarado
+# ============================================================
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+    AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLt0nfd6sg="
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "ucv-de-secret-2024"
+    # Paquetes Python instalados via mecanismo oficial de Airflow (sin problemas de permisos)
+    # pyspark NO se incluye aqui — corre en de_spark que ya tiene Java
+    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 requests pyarrow pandas sqlalchemy psycopg2-binary dbt-postgres selenium webdriver-manager"
+    # Credenciales MinIO
+    MINIO_ENDPOINT: http://minio:9000
+    MINIO_ACCESS_KEY: minioadmin
+    MINIO_SECRET_KEY: minioadmin123
+    # Credenciales PostgreSQL DWH
+    DWH_HOST: postgres
+    DWH_PORT: "5432"
+    DWH_DB: datawarehouse
+    DWH_USER: dataeng
+    DWH_PASSWORD: dateng2024
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./scripts:/opt/airflow/scripts
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./data:/opt/airflow/data
+    # Socket Docker: permite que Airflow ejecute "docker exec de_spark ..."
+    - /var/run/docker.sock:/var/run/docker.sock
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - de_network
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: de_postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - de_network
+
+  # ── MinIO ───────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: de_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9002:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - de_network
+
+  # ── Airflow Init ────────────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    container_name: de_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@ucv.edu.pe \
+          --password admin || true
+        echo "Airflow inicializado correctamente"
+    restart: on-failure
+
+  # ── Airflow Webserver ───────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: de_airflow_webserver
+    command: webserver
+    ports:
+      - "8060:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Airflow Scheduler ───────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: de_airflow_scheduler
+    command: scheduler
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Jupyter + PySpark ───────────────────────────────────────
+  # Este contenedor tiene Java + PySpark instalados.
+  # El spark_job.py se ejecuta AQUI via "docker exec de_spark ..."
+  spark:
+    image: jupyter/pyspark-notebook:latest
+    container_name: de_spark
+    environment:
+      JUPYTER_TOKEN: "dateng2024"
+      JUPYTER_ENABLE_LAB: "yes"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+    volumes:
+      - ./scripts:/home/jovyan/work/scripts
+      - ./data:/home/jovyan/work/data
+    ports:
+      - "8888:8888"
+      - "4040:4040"
+    networks:
+      - de_network
+
+
+# ── Selenium Chrome (Navegador Remoto) ──────────────────────
+  selenium-chrome:
+    image: selenium/standalone-chrome:latest
+    container_name: de_selenium_chrome
+    ports:
+      - "4444:4444"
+      - "7900:7900"  # Opcional: te permite ver en vivo lo que hace el navegador desde el link http://localhost:7900
+    shm_size: 2g     # Evita que Chrome se quede sin memoria al cargar páginas pesadas
+    volumes:
+      - ./data:/opt/airflow/data
+    networks:
+      - de_network
+
+      
+
+volumes:
+  postgres_data:
+  minio_data:
+
+networks:
+  de_network:
+    driver: bridge
