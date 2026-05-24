@@ -1,0 +1,17 @@
+# Ignorar logs de Airflow
+logs/
+
+# Ignorar datos descargados (¡Muy importante!)
+data/
+
+# Ignorar archivos temporales de Python y entornos virtuales
+__pycache__/
+*.pyc
+.venv/
+venv/
+ENV/
+
+# Ignorar configuraciones ocultas de Docker o del sistema
+.env
+.DS_Store
+Thumbs.db
