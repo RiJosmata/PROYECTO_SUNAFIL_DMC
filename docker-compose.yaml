@@ -14,9 +14,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
     AIRFLOW__WEBSERVER__SECRET_KEY: "ucv-de-secret-2024"
-    # Paquetes Python instalados via mecanismo oficial de Airflow (sin problemas de permisos)
-    # pyspark NO se incluye aqui — corre en de_spark que ya tiene Java
-    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 requests pyarrow pandas sqlalchemy psycopg2-binary dbt-postgres selenium webdriver-manager"
+    # Inyección dinámica de librerías: instala dependencias en el clúster vía pip al inicializar
+    _PIP_ADDITIONAL_REQUIREMENTS: "boto3 requests pyarrow pandas sqlalchemy psycopg2-binary dbt-postgres selenium webdriver-manager xlrd"
     # Credenciales MinIO
     MINIO_ENDPOINT: http://minio:9000
     MINIO_ACCESS_KEY: minioadmin
@@ -156,7 +155,10 @@ services:
 # ── Selenium Chrome (Navegador Remoto) ──────────────────────
   selenium-chrome:
     image: selenium/standalone-chrome:latest
-    container_name: de_selenium_chrome
+    container_name: selenium_chrome
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     ports:
       - "4444:4444"
       - "7900:7900"  # Opcional: te permite ver en vivo lo que hace el navegador desde el link http://localhost:7900
