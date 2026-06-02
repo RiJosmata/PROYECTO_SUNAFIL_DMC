@@ -1,7 +1,6 @@
 # ============================================================
 #  DATA ENGINEERING PROJECT — Docker Compose
 #  Stack: Airflow + PostgreSQL + MinIO + Spark + dbt
-#  UCV edu.continua | Ing. Hector Loja Alvarado
 # ============================================================
 
 x-airflow-common: &airflow-common
